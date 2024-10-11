@@ -9,6 +9,8 @@ from __future__ import print_function  # Requires: Python >= 2.6
 
 import sys
 
+from ipfix import ipfix
+
 sys.dont_write_bytecode = True
 
 import cProfile
@@ -921,7 +923,7 @@ def init():
 
     update_timer()
 
-    if not config.DISABLE_CHECK_SUDO and check_sudo() is False:
+    if not config.DISABLE_CHECK_SUDO and check_sudo() is False and not config.ipfix:
         sys.exit("[!] please run '%s' with root privileges" % __file__)
 
     if config.plugins:
@@ -968,7 +970,7 @@ def init():
     if config.pcap_file:
         for _ in config.pcap_file.split(','):
             _caps.append(pcapy.open_offline(_))
-    else:
+    elif not config.ipfix:
         interfaces = set(_.strip() for _ in config.MONITOR_INTERFACE.split(','))
 
         try:
@@ -1014,7 +1016,7 @@ def init():
         except re.error:
             sys.exit("[!] invalid configuration value for 'REMOTE_SEVERITY_REGEX' ('%s')" % config.REMOTE_SEVERITY_REGEX)
 
-    if config.CAPTURE_FILTER:
+    if config.CAPTURE_FILTER and not config.ipfix:
         print("[i] setting capture filter '%s'" % config.CAPTURE_FILTER)
         for _cap in _caps:
             try:
@@ -1185,7 +1187,13 @@ def monitor():
                 if not success:
                     time.sleep(REGULAR_SENSOR_SLEEP_TIME)
 
-        if config.profile and len(_caps) == 1:
+        if config.ipfix:
+            try:
+                ipfix.global_malfix.setup_pyfixbuf()
+                ipfix.global_malfix.capture_ipfix()
+            except Exception as e:
+                print(e)
+        elif config.profile and len(_caps) == 1:
             print("[=] will store profiling results to '%s'..." % config.profile)
             _(_caps[0])
         else:
@@ -1252,6 +1260,14 @@ def main():
     parser.add_option("--offline", dest="offline", action="store_true", help="disable (online) trail updates")
     parser.add_option("--debug", dest="debug", action="store_true", help=optparse.SUPPRESS_HELP)
     parser.add_option("--profile", dest="profile", help=optparse.SUPPRESS_HELP)
+    parser.add_option("--ipfix", dest="ipfix", action="store_true", help="listen ipfix instead if pcap")
+    parser.add_option("--ipfix_listen_port", dest="ipfix_listen_port", default="19000", help="set port to listen on")
+    parser.add_option("--ipfix_listen_protocol", dest="ipfix_listen_protocol", default="tcp", help="set protocol to listen on")
+    parser.add_option("--ipfix_export_port", dest="ipfix_export_port", default="2055",  help="set port to export")
+    parser.add_option("--ipfix_export_protocol", dest="ipfix_export_protocol", default="udp",  help="set protocol for export")
+    parser.add_option("--ipfix_export_host", dest="ipfix_export_host", default="localhost",  help="set host for export")
+    parser.add_option("--ipfix_forward", dest="ipfix_forward", action='store_true',  help="forward all incoming ipfix")
+
 
     patch_parser(parser)
 
@@ -1280,8 +1296,16 @@ def main():
 
             print("[i] using pcap file(s) '%s'" % options.pcap_file)
 
-    if not config.DISABLE_CHECK_SUDO and not check_sudo():
+    if not config.DISABLE_CHECK_SUDO and not check_sudo() and not config.ipfix:
         sys.exit("[!] please run '%s' with root privileges" % __file__)
+
+    if config.ipfix:
+        print("[i] using IPFIX, listening on 0.0.0.0:" + config.ipfix_listen_port + "/tcp")
+        print("[i] using IPFIX, exporting on " +
+              config.ipfix_export_host + ":" +
+              config.ipfix_export_port + "/" +
+              config.ipfix_export_protocol)
+        print("[i] forwarding all incoming ipfix packages: " + ("yes" if config.ipfix_forward else "no"))
 
     try:
         init()
